@@ -14,9 +14,9 @@ An end-to-end data analytics project built on **Databricks Free Edition** that p
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  LOCAL / SAP SOURCE                                                 │
+│  SOURCE                                                             │
 │  39 Excel files: PlantA_Jan2025_Week1.xlsx ...                      │
-│  3 Plants × 13 Weeks × ~15 records each                            │
+│  3 Plants × 13 Weeks × ~15 records each                             │
 └────────────────────┬────────────────────────────────────────────────┘
                      │ Data Ingestion (Upload to Volume)
                      ▼
@@ -62,29 +62,18 @@ An end-to-end data analytics project built on **Databricks Free Edition** that p
 
 ---
 
-## Project Structure
+## Repository Contents
 
-```
-sap-pm-databricks/
-├── README.md
-├── LICENSE
-├── .gitignore
-├── data/
-│   └── weekly_files/          # 39 mock SAP PM Excel files
-│       ├── PlantA_Jan2025_Week1.xlsx
-│       ├── PlantA_Jan2025_Week2.xlsx
-│       ├── ...
-│       └── PlantC_Mar2025_Week5.xlsx
-├── notebooks/
-│   ├── 01_Ingest_Raw_Data.py       # Bronze layer ingestion
-│   ├── 02_Data_Quality_Checks.sql  # 8 DQ validation rules
-│   ├── 03_Silver_Cleansing.py      # Filter, deduplicate → Silver
-│   └── 04_Gold_Metrics.sql         # 5 Gold tables with KPIs
-├── scripts/
-│   └── upload_to_databricks.py     # Local → DBFS upload automation
-└── docs/
-    └── genie_setup.md              # Genie Space configuration guide
-```
+| File | Purpose |
+|------|---------|
+| `01_Ingest_Raw_Data.py` | Databricks notebook — reads all 39 Excel files from a Unity Catalog Volume and builds the Bronze table |
+| `02_Data_Quality_Checks.sql` | 8 DQ validation rules producing a scorecard |
+| `03_Silver_Cleansing.py` | Filters bad records and deduplicates → Silver table |
+| `04_Gold_Metrics.sql` | Builds 5 Gold tables with KPIs, trends, failure analysis, and equipment summary |
+| `PlantX_<Month><Year>_Week<N>.xlsx` | 39 mock SAP PM data files (3 plants × 13 weeks) |
+| `README.md` | This file |
+| `LICENSE` | MIT license |
+| `.gitignore` | Standard Python/OS ignores |
 
 ---
 
@@ -124,6 +113,7 @@ Every order with all filterable dimensions and pre-computed metrics:
 - **Computed fields:** `maintenance_category` (Preventive/Corrective), `schedule_status` (On Time/Late/In Progress), `budget_status` (Under Budget/Within 10%/Over Budget), `cost_variance_pct`, `labor_efficiency_pct`, `actual_duration_hours`
 
 ### `gold_plant_metrics` — Plant KPI scorecard
+
 | Metric | Description |
 |--------|-------------|
 | `schedule_compliance_pct` | % orders completed on or before planned end date |
@@ -168,18 +158,18 @@ Total orders, breakdowns, cost, and failure mode diversity per equipment ID.
 - Databricks Free Edition account ([sign up here](https://www.databricks.com/try-databricks))
 - Serverless Starter Warehouse (included with Free Edition)
 
-### Step-by-step
+### Setup Steps
 
-1. **Upload data** — Use Data Ingestion in Databricks to upload all 39 Excel files from `data/weekly_files/` to a Unity Catalog Volume.
+1. **Upload data** — In Databricks, use **Data Ingestion** → upload all 39 `PlantX_*.xlsx` files to a Unity Catalog Volume (e.g., `/Volumes/workspace/default/sap_pm_data/`).
 
 2. **Create schema** — In SQL Editor, run:
    ```sql
    CREATE SCHEMA IF NOT EXISTS workspace.sap_pm;
    ```
 
-3. **Import notebooks** — Upload the 4 notebooks from `notebooks/` into a Workspace folder.
+3. **Import notebooks** — Download the 4 notebook files from this repo and import them into a Workspace folder in Databricks.
 
-4. **Update the volume path** — In `01_Ingest_Raw_Data.py`, update `VOLUME_PATH` to your actual volume path (find it in Catalog browser).
+4. **Update the volume path** — Open `01_Ingest_Raw_Data.py` in Databricks. In Cell 1, update `VOLUME_PATH` to your actual volume path (find it in Catalog browser).
 
 5. **Run notebooks in order:**
    ```
@@ -191,13 +181,58 @@ Total orders, breakdowns, cost, and failure mode diversity per equipment ID.
 
 6. **Build dashboard** — In Dashboards, create a new dashboard, add the Gold tables as datasets, and add visualization tiles (see layout above).
 
-7. **Set up Genie** — Create a Genie Space with all 5 Gold tables as trusted assets. Add table/column descriptions from `docs/genie_setup.md`.
+7. **Set up Genie** — Create a Genie Space with all 5 Gold tables as trusted assets. See the Genie Configuration section below for table/column descriptions.
 
 ---
 
 ## Genie Space Configuration
 
-See [`docs/genie_setup.md`](docs/genie_setup.md) for complete table descriptions, column descriptions, and sample questions to configure your Genie Space for optimal natural language accuracy.
+### Setup
+1. Click **Genie** in the left sidebar → **New**
+2. Name: **SAP PM Maintenance Assistant**
+3. Compute: Serverless Starter Warehouse
+4. Add these 5 trusted tables from `workspace.sap_pm`: `gold_orders_fact`, `gold_plant_metrics`, `gold_monthly_trends`, `gold_failure_analysis`, `gold_equipment_summary`
+
+### Table Descriptions
+
+**gold_orders_fact:** Order-level fact table with every maintenance work order. Contains all filterable dimensions (Plant, Date, Order Type, Priority, Status, Equipment) and pre-computed metrics (cost variance, labor efficiency, duration, schedule status, budget status). Use this as the primary table for detailed analysis and drill-downs.
+
+**gold_plant_metrics:** Plant-level KPI scorecard. One row per plant with schedule compliance, MTTR, PM:CM ratio, breakdown rate, backlog, cost totals, duration percentiles, and labor efficiency.
+
+**gold_monthly_trends:** Monthly aggregated metrics by plant, maintenance category, and order type. Use for time-series trends of cost, volume, compliance, and breakdowns.
+
+**gold_failure_analysis:** Failure patterns for corrective orders. Damage codes, root causes, average and P90 repair cost/hours. Use for reliability and root cause analysis.
+
+**gold_equipment_summary:** Equipment-level summary showing total orders, breakdowns, cost, and failure modes per equipment ID. Use to identify problem equipment.
+
+### Key Column Descriptions
+
+| Column | Description |
+|--------|-------------|
+| `maintenance_category` | Either 'Preventive' (PM01, PM03, PM04) or 'Corrective' (PM02, PM05) |
+| `pm_cm_ratio` | Ratio of preventive to corrective orders. >2.0 = world-class, <1.0 = mostly reactive |
+| `schedule_status` | 'On Time' if completed by planned date, 'Late' if after, 'In Progress' if still open |
+| `budget_status` | 'Under Budget', 'Within 10%', or 'Over Budget' based on actual vs planned cost |
+| `cost_variance_pct` | Percentage difference between actual and planned cost. Positive = over budget |
+| `mttr_hours` | Mean Time To Repair in hours, for corrective and emergency orders only |
+| `p90_duration_hours` | 90th percentile repair duration — the worst 10% take longer than this |
+| `is_breakdown` | 1 if emergency breakdown, 0 otherwise. Sum for breakdown count |
+| `is_backlog` | 1 if order status is Created or Released (open work). Sum for backlog count |
+| `schedule_compliance_pct` | % of orders completed on/before planned end date. Target >90% |
+| `breakdown_rate_pct` | % of all orders that were emergency breakdowns. Lower = better |
+
+### Sample Questions to Add as Starters
+
+1. Which plant has the highest breakdown rate?
+2. Compare schedule compliance across all three plants
+3. What is the PM to CM ratio for each plant and is it world-class?
+4. Show the monthly cost trend by plant
+5. What are the top 5 most expensive damage codes?
+6. Which equipment IDs have the most breakdowns?
+7. Show orders over budget by plant and maintenance category
+8. What is the P90 repair duration for each plant?
+9. How does cost per preventive order compare to corrective?
+10. Show backlog count trend by month and plant
 
 ---
 
@@ -205,7 +240,7 @@ See [`docs/genie_setup.md`](docs/genie_setup.md) for complete table descriptions
 
 ```
 1. Upload new weekly files to your Volume via Data Ingestion
-2. Re-run notebooks 01 → 02 → 03 → 04
+2. Re-run notebooks 01 → 02 → 03 → 04 (takes ~2-3 minutes total)
 3. Dashboard and Genie auto-refresh (live queries against Gold tables)
 ```
 
