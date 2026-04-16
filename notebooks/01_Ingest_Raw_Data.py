@@ -3,6 +3,16 @@
 # MAGIC # 01 — Ingest Raw Data (Bronze Layer)
 # MAGIC Reads all weekly SAP PM Excel files from a Unity Catalog Volume,
 # MAGIC extracts metadata from filenames, and saves as a Bronze Delta table.
+# MAGIC
+# MAGIC **Note:** All Excel columns are read as strings (`dtype=str`) to avoid
+# MAGIC schema-mismatch errors during the union of 39 files with slightly
+# MAGIC different inferred types. Type casting happens in the Gold layer.
+
+# COMMAND ----------
+
+# DBTITLE 1,Install openpyxl (run this FIRST)
+%pip install openpyxl
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -31,25 +41,7 @@ if len(xlsx_files) > 6:
 
 # COMMAND ----------
 
-# DBTITLE 1,Install openpyxl
-%pip install openpyxl
-dbutils.library.restartPython()
-
-# COMMAND ----------
-
-# DBTITLE 1,Re-set config after restart
-# ⚠️ Re-run after pip install restart
-VOLUME_PATH = "/Volumes/workspace/default/sap_pm_data"  # YOUR path
-CATALOG = "workspace"
-SCHEMA = "sap_pm"
-
-files = dbutils.fs.ls(VOLUME_PATH)
-xlsx_files = [f for f in files if f.name.endswith(".xlsx")]
-print(f"Ready: {len(xlsx_files)} files")
-
-# COMMAND ----------
-
-# DBTITLE 1,Read all files and combine
+# DBTITLE 1,Read all files and combine (strings-first approach)
 import pandas as pd
 import re
 from pyspark.sql import functions as F
@@ -61,7 +53,8 @@ errors = []
 for f in xlsx_files:
     try:
         local_path = f"{VOLUME_PATH}/{f.name}"
-        pdf = pd.read_excel(local_path)
+        # Read everything as strings to avoid type inference conflicts across files
+        pdf = pd.read_excel(local_path, dtype=str)
         
         # Extract plant, month, year, week from filename
         match = re.match(

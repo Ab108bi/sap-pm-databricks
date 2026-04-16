@@ -2,6 +2,9 @@
 -- MAGIC %md
 -- MAGIC # 02 — Data Quality Checks
 -- MAGIC Validates the Bronze layer data and produces a DQ scorecard.
+-- MAGIC
+-- MAGIC **Note:** Because Bronze stores all columns as strings, numeric checks
+-- MAGIC use `CAST(... AS DOUBLE)` for proper comparison.
 
 -- COMMAND ----------
 
@@ -34,7 +37,7 @@ FROM workspace.sap_pm.bronze_pm_orders
 
 UNION ALL
 SELECT 'Negative Actual Cost', 'High',
-  SUM(CASE WHEN Actual_Cost_USD < 0 THEN 1 ELSE 0 END),
+  SUM(CASE WHEN CAST(Actual_Cost_USD AS DOUBLE) < 0 THEN 1 ELSE 0 END),
   COUNT(*)
 FROM workspace.sap_pm.bronze_pm_orders
 
@@ -81,7 +84,7 @@ SELECT
   SUM(CASE WHEN Priority NOT IN ('1','2','3','4') THEN 1 ELSE 0 END) AS invalid_priority,
   SUM(CASE WHEN Equipment_ID IS NULL OR Equipment_ID = '' THEN 1 ELSE 0 END) AS missing_equip,
   SUM(CASE WHEN Planned_Cost_USD IS NULL THEN 1 ELSE 0 END) AS missing_cost,
-  SUM(CASE WHEN Actual_Cost_USD < 0 THEN 1 ELSE 0 END) AS negative_cost,
+  SUM(CASE WHEN CAST(Actual_Cost_USD AS DOUBLE) < 0 THEN 1 ELSE 0 END) AS negative_cost,
   SUM(CASE WHEN Planned_Start_Date > Planned_End_Date THEN 1 ELSE 0 END) AS date_logic_error
 FROM workspace.sap_pm.bronze_pm_orders
 GROUP BY Plant_Name

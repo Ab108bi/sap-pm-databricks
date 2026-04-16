@@ -2,6 +2,9 @@
 # MAGIC %md
 # MAGIC # 03 — Silver Layer Cleansing
 # MAGIC Filters out bad records from Bronze and saves a clean Silver table.
+# MAGIC
+# MAGIC **Note:** Uses `.cast("double")` on `Actual_Cost_USD` since Bronze
+# MAGIC stores all columns as strings.
 
 # COMMAND ----------
 
@@ -18,7 +21,7 @@ silver = bronze.filter(
     (F.col("Priority").isin(['1','2','3','4'])) &
     (F.col("Order_Number").isNotNull()) &
     (F.col("Planned_Start_Date") <= F.col("Planned_End_Date")) &
-    ((F.col("Actual_Cost_USD") >= 0) | (F.col("Actual_Cost_USD").isNull()))
+    ((F.col("Actual_Cost_USD").cast("double") >= 0) | (F.col("Actual_Cost_USD").isNull()))
 )
 silver = silver.dropDuplicates(["Order_Number"])
 
