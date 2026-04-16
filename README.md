@@ -10,6 +10,20 @@ An end-to-end data analytics project built on **Databricks Free Edition** that p
 
 ---
 
+## Dashboard Preview
+
+![Dashboard Preview](dashboard_preview.png)
+
+**Interactive Databricks SQL Dashboard** with 10 visualizations and 6 global filters (Plant Name, Period, Maintenance Category, Order Type, Priority, Status). Every chart reacts dynamically as filters change.
+
+**Key findings from the data:**
+- 557 work orders across 3 plants, $6M total maintenance cost
+- Average MTTR of 43 hours with Plant C showing the highest breakdown rate (18.4%)
+- Schedule compliance at 24.8% (target: >90%) — significant room for improvement across all plants
+- Top failure modes: vibration, corrosion, and blocking account for ~45% of all breakdowns
+
+---
+
 ## Architecture
 
 ```
@@ -24,11 +38,11 @@ An end-to-end data analytics project built on **Databricks Free Edition** that p
 │  UNITY CATALOG VOLUME                                               │
 │  /Volumes/workspace/default/sap_pm_data/                            │
 └────────────────────┬────────────────────────────────────────────────┘
-                     │ Notebook 01: Ingest
+                     │ Notebook 01: Ingest (read as strings)
                      ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  BRONZE LAYER          workspace.sap_pm.bronze_pm_orders            │
-│  Raw data, as-is from Excel + filename metadata                     │
+│  Raw data, as-is from Excel + filename metadata (all strings)       │
 └────────────────────┬────────────────────────────────────────────────┘
                      │ Notebook 02: DQ Checks → dq_results table
                      │ Notebook 03: Filter & Deduplicate
@@ -37,12 +51,12 @@ An end-to-end data analytics project built on **Databricks Free Edition** that p
 │  SILVER LAYER          workspace.sap_pm.silver_pm_orders            │
 │  Cleaned, validated, deduplicated                                   │
 └────────────────────┬────────────────────────────────────────────────┘
-                     │ Notebook 04: Aggregate & Compute KPIs
+                     │ Notebook 04: Type cast + aggregate + KPIs
                      ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  GOLD LAYER (5 tables)                                              │
 │                                                                     │
-│  gold_orders_fact ─── Order-level fact with all dimensions + metrics│
+│  gold_orders_fact ─── Order-level fact with proper types + flags    │
 │  gold_plant_metrics ─ Plant scorecard (compliance, MTTR, PM:CM)     │
 │  gold_monthly_trends  Monthly aggregates for time-series charts     │
 │  gold_failure_analysis Damage codes, causes, repair cost/duration   │
@@ -53,7 +67,7 @@ An end-to-end data analytics project built on **Databricks Free Edition** that p
               ▼             ▼
      ┌──────────────┐ ┌──────────────┐
      │  Dashboard   │ │    Genie     │
-     │  15 tiles    │ │  Natural     │
+     │  10 visuals  │ │  Natural     │
      │  6 filters   │ │  Language    │
      │  KPIs, trends│ │  Q&A over    │
      │  failures    │ │  Gold tables │
@@ -62,15 +76,36 @@ An end-to-end data analytics project built on **Databricks Free Edition** that p
 
 ---
 
+## Design Decision: Strings-First Ingestion
+
+Excel files often have slightly different inferred types across batches (a column that's all integers in one file might have an empty cell in another, flipping it to float). When unioning 39 files, this causes schema-mismatch errors.
+
+**Solution:** Read every column as a string in Bronze, then cast to proper types in `gold_orders_fact`. This is a common pattern in production pipelines and keeps Bronze lossless.
+
+```python
+# In 01_Ingest_Raw_Data.py
+pdf = pd.read_excel(local_path, dtype=str)   # All columns as strings
+```
+
+```sql
+-- In 04_Gold_Metrics.sql (gold_orders_fact)
+CAST(Planned_Cost_USD AS DOUBLE) AS Planned_Cost_USD,
+TO_DATE(Created_Date, 'yyyy-MM-dd') AS created_date,
+UNIX_TIMESTAMP(Actual_End_Date, 'yyyy-MM-dd HH:mm')  -- for duration calculations
+```
+
+---
+
 ## Repository Contents
 
 | File | Purpose |
 |------|---------|
-| `01_Ingest_Raw_Data.py` | Databricks notebook — reads all 39 Excel files from a Unity Catalog Volume and builds the Bronze table |
-| `02_Data_Quality_Checks.sql` | 8 DQ validation rules producing a scorecard |
+| `01_Ingest_Raw_Data.py` | Bronze layer — reads all 39 Excel files as strings, extracts filename metadata |
+| `02_Data_Quality_Checks.sql` | 8 DQ validation rules producing a scorecard (includes `CAST` for numeric checks) |
 | `03_Silver_Cleansing.py` | Filters bad records and deduplicates → Silver table |
-| `04_Gold_Metrics.sql` | Builds 5 Gold tables with KPIs, trends, failure analysis, and equipment summary |
+| `04_Gold_Metrics.sql` | Casts types and builds 5 Gold tables (fact + 4 aggregates) |
 | `PlantX_<Month><Year>_Week<N>.xlsx` | 39 mock SAP PM data files (3 plants × 13 weeks) |
+| `dashboard_preview.png` | Full dashboard screenshot |
 | `README.md` | This file |
 | `LICENSE` | MIT license |
 | `.gitignore` | Standard Python/OS ignores |
@@ -97,11 +132,14 @@ Example: PlantA_Jan2025_Week1.xlsx
 `Order_Number`, `Order_Type`, `Order_Type_Desc`, `Plant`, `Plant_Name`, `Functional_Location`, `Equipment_ID`, `Priority`, `Priority_Desc`, `Maintenance_Plan`, `Activity_Type`, `Activity_Type_Desc`, `Status`, `Status_Desc`, `Work_Center`, `Planner_Group`, `Cost_Center`, `Created_Date`, `Planned_Start_Date`, `Planned_End_Date`, `Actual_Start_Date`, `Actual_End_Date`, `Planned_Cost_USD`, `Actual_Cost_USD`, `Planned_Labor_Hours`, `Actual_Labor_Hours`, `Damage_Code`, `Cause_Code`, `Breakdown_Indicator`, `Notification_Number`
 
 ### Embedded Data Quality Issues (Intentional)
+The mock data includes realistic issues to exercise the DQ layer:
 - Duplicate `Order_Number` entries
 - Invalid priority codes (value `5` outside range 1-4)
 - `Planned_Start_Date` after `Planned_End_Date`
 - Negative `Actual_Cost_USD` values
 - Missing `Planned_Cost_USD` and `Equipment_ID` fields
+
+**Note:** The low schedule compliance (24.8%) is also by design — the generator simulates underperforming plants to showcase the analytics catching real operational issues.
 
 ---
 
@@ -135,20 +173,25 @@ Total orders, breakdowns, cost, and failure mode diversity per equipment ID.
 
 ---
 
-## Dashboard Layout
+## Dashboard Visuals
 
-15 visualization tiles with 6 interactive filters:
+10 tiles with 6 interactive filters (Plant, Period, Maintenance Category, Order Type, Priority, Status):
 
-**Filters:** Plant Name, Year-Month, Maintenance Category, Order Type, Priority, Status
-
-| Row | Tiles | Source Table |
-|-----|-------|-------------|
-| 1 | KPI Counters: Total Orders, Total Cost, Avg MTTR, Schedule Compliance % | `gold_plant_metrics` |
-| 2 | Plant Scorecard (table) + PM:CM Ratio (bar) | `gold_plant_metrics` |
-| 3 | Monthly Cost Trend (line) + Order Volume by Category (stacked bar) | `gold_monthly_trends` |
-| 4 | Order Type Mix (stacked bar) + Planned vs Actual Cost (grouped bar) | `gold_orders_fact` / `gold_plant_metrics` |
-| 5 | Top Failure Modes (horizontal bar) + Costliest Equipment (table) | `gold_failure_analysis` / `gold_equipment_summary` |
-| 6 | Budget Status (pie) + Compliance Trend (line) + PM vs CM Cost (bar) | `gold_orders_fact` / `gold_monthly_trends` / `gold_plant_metrics` |
+| Tile | Type | Source Table |
+|------|------|-------------|
+| Total Orders | KPI Counter | `gold_plant_metrics` |
+| Total Maintenance Cost | KPI Counter | `gold_plant_metrics` |
+| Avg MTTR (Hours) | KPI Counter | `gold_plant_metrics` |
+| Schedule Compliance | KPI Counter | `gold_plant_metrics` |
+| Plant Scorecard | Table | `gold_plant_metrics` |
+| Monthly Cost Trend | Line chart | `gold_monthly_trends` |
+| Order Volume Over Time | Stacked bar | `gold_monthly_trends` |
+| Order Type Mix by Plant | Stacked bar | `gold_orders_fact` |
+| Planned vs Actual Cost | Grouped bar | `gold_plant_metrics` |
+| Top Failure Modes | Horizontal bar | `gold_failure_analysis` |
+| Costliest Equipment (Top 15) | Table | `gold_equipment_summary` |
+| Budget Status Distribution | Donut | `gold_orders_fact` |
+| Schedule Compliance Trend | Line chart | `gold_monthly_trends` |
 
 ---
 
@@ -169,7 +212,7 @@ Total orders, breakdowns, cost, and failure mode diversity per equipment ID.
 
 3. **Import notebooks** — Download the 4 notebook files from this repo and import them into a Workspace folder in Databricks.
 
-4. **Update the volume path** — Open `01_Ingest_Raw_Data.py` in Databricks. In Cell 1, update `VOLUME_PATH` to your actual volume path (find it in Catalog browser).
+4. **Update the volume path** — Open `01_Ingest_Raw_Data.py` in Databricks. Update `VOLUME_PATH` to your actual volume path (find it in Catalog browser).
 
 5. **Run notebooks in order:**
    ```
@@ -179,9 +222,9 @@ Total orders, breakdowns, cost, and failure mode diversity per equipment ID.
    04_Gold_Metrics.sql         → Creates 5 Gold tables
    ```
 
-6. **Build dashboard** — In Dashboards, create a new dashboard, add the Gold tables as datasets, and add visualization tiles (see layout above).
+6. **Build dashboard** — In Dashboards, create a new dashboard, add the Gold tables as datasets, add visualization tiles (see table above), and connect filters to relevant datasets.
 
-7. **Set up Genie** — Create a Genie Space with all 5 Gold tables as trusted assets. See the Genie Configuration section below for table/column descriptions.
+7. **Set up Genie** — Create a Genie Space with all 5 Gold tables as trusted assets. See the Genie Configuration section below.
 
 ---
 
@@ -191,7 +234,7 @@ Total orders, breakdowns, cost, and failure mode diversity per equipment ID.
 1. Click **Genie** in the left sidebar → **New**
 2. Name: **SAP PM Maintenance Assistant**
 3. Compute: Serverless Starter Warehouse
-4. Add these 5 trusted tables from `workspace.sap_pm`: `gold_orders_fact`, `gold_plant_metrics`, `gold_monthly_trends`, `gold_failure_analysis`, `gold_equipment_summary`
+4. Add 5 trusted tables from `workspace.sap_pm`: `gold_orders_fact`, `gold_plant_metrics`, `gold_monthly_trends`, `gold_failure_analysis`, `gold_equipment_summary`
 
 ### Table Descriptions
 
